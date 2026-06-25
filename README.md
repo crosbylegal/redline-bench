@@ -1,4 +1,4 @@
-<img width="1640" height="624" alt="RedlineBench" src="assets/logo.png" />
+
 
 ## Abstract
 
@@ -6,11 +6,11 @@
 
 Concretely, it measures how well AI agents **redline contracts the way attorneys actually work**: by producing a real Word `.docx` with native tracked changes and threaded margin comments (the document an in-house lawyer would open in Word's Review pane) and grading it against attorney-authored rubrics with an LLM judge.
 
-Each task drops the agent into a live contract negotiation: _you are in-house counsel for one party, at a specific turn of the negotiation; here is the contract as it stands, your playbook, and your commercial context. Produce your redline._
+Each task drops the agent into a live contract negotiation: *you are in-house counsel for one party, at a specific turn of the negotiation; here is the contract as it stands, your playbook, and your commercial context. Produce your redline.*
 
 - **Report** ([intelligence.crosby.ai/benchmark](https://intelligence.crosby.ai/benchmark)): the published findings and methodology.
 - **Code** (this repo, GitHub): the reproduction driver, scoring, judging, and metrics tooling.
-- **Data** ([`crosbylegal/RedlineBench`](https://huggingface.co/datasets/crosbylegal/RedlineBench) on HuggingFace): the 140 runnable tasks. **Not committed here**; it is downloaded on demand (see [Reproducing](#reproducing)).
+- **Data** (`[crosbylegal/RedlineBench](https://huggingface.co/datasets/crosbylegal/RedlineBench)` on HuggingFace): the 140 runnable tasks. **Not committed here**; it is downloaded on demand (see [Reproducing](#reproducing)).
 
 ## What's being tested
 
@@ -23,11 +23,13 @@ Each task drops the agent into a live contract negotiation: _you are in-house co
 
 **140 tasks across 3 scenarios**, each scenario a complete multi-turn negotiation between a vendor (AgentCo, an AI hiring-platform company) and an enterprise customer:
 
-| Scenario | Deal                                                                        | Tasks |
-| -------- | --------------------------------------------------------------------------- | ----- |
-| 1        | Vendor-led SaaS MSA: AgentCo marks up LargeCo's template first              | 50    |
-| 2        | Customer-led SaaS MSA: LargeCo writes the first markup                      | 40    |
-| 3        | Professional-services MSA: AgentCo on GiantCo's procurement-heavy template  | 50    |
+
+| Scenario | Deal                                                                       | Tasks |
+| -------- | -------------------------------------------------------------------------- | ----- |
+| 1        | Vendor-led SaaS MSA: AgentCo marks up LargeCo's template first             | 50    |
+| 2        | Customer-led SaaS MSA: LargeCo writes the first markup                     | 40    |
+| 3        | Professional-services MSA: AgentCo on GiantCo's procurement-heavy template | 50    |
+
 
 Tasks span **4 negotiation turns**. Turn 1 is a clean-template first markup; turns 2–4 are response turns where the document arrives carrying the negotiation so far (real tracked changes and comment threads from prior turns), and the agent must classify and respond to every existing edit.
 
@@ -67,6 +69,7 @@ The golden `attorney_redlines.docx` lives under `tests/` (the verifier side, nev
 
 Agents edit the document through a bundled [skill](skills/contract-redliner/SKILL.md) of four self-contained Python scripts:
 
+
 | Script             | Purpose                                                                                                                     |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------- |
 | `read_document.py` | Render the contract as Markdown with stable paragraph IDs + an appendix of every existing comment and tracked change        |
@@ -74,33 +77,43 @@ Agents edit the document through a bundled [skill](skills/contract-redliner/SKIL
 | `add_comment.py`   | Standalone comment threads and threaded replies                                                                             |
 | `mark_reserved.py` | Whole-section removal that preserves downstream numbering                                                                   |
 
-The canonical copy lives at [`skills/contract-redliner/`](skills/contract-redliner); it is also vendored into each task's `environment/skills/` so Harbor can build the task container.
+
+The canonical copy lives at `[skills/contract-redliner/](skills/contract-redliner)`; it is also vendored into each task's `environment/skills/` so Harbor can build the task container.
 
 ## Setup
 
-1. Install [Harbor](https://harborframework.com) and have Docker running:
+1. Make a new environment:
+  ```bash
+  uv venv
+  source .venv/bin/activate
+  ```
+2. Install [Harbor](https://harborframework.com) and have Docker running:
+  ```bash
+  uv tool install harbor
+  ```
+3. Install this package (Python ≥3.10):
+  ```bash
+  uv pip install -e .
+  ```
+4. Install Modal:
+  ```bash
+  uv tool install modal
+  uv pip install -e ".[docx]" modal
+  uv tool install 'harbor[modal]'
+  ```
+5. API keys: copy `.env.template` to `.env` and fill in your own:
 
-   ```bash
-   uv tool install harbor
-   ```
+  | Variable                                          | Used for                                                            |
+  | ------------------------------------------------- | ------------------------------------------------------------------- |
+  | `OPENAI_API_KEY`                                  | OpenAI panel judge (gpt-5.4-mini) and codex agents                  |
+  | `ANTHROPIC_API_KEY`                               | Anthropic panel judge (claude-haiku-4-5) and claude-code agents     |
+  | `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` | Gemini panel judge (gemini-3.1-flash-lite) + Gemini/opencode agents |
+  | `OPENROUTER_API_KEY`                              | OpenRouter-backed opencode agents                                   |
 
-2. Install this package (Python ≥3.10):
-
-   ```bash
-   pip install -e .
-   ```
-
-3. API keys: copy `.env.template` to `.env` and fill in your own:
-
-   | Variable                                          | Used for                                                            |
-   | ------------------------------------------------- | ------------------------------------------------------------------- |
-   | `OPENAI_API_KEY`                                  | OpenAI panel judge (gpt-5.4-mini) and codex agents                  |
-   | `ANTHROPIC_API_KEY`                               | Anthropic panel judge (claude-haiku-4-5) and claude-code agents     |
-   | `GEMINI_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` | Gemini panel judge (gemini-3.1-flash-lite) + Gemini/opencode agents |
 
 ## Reproducing
 
-The benchmark data is **not** in this repo; it is resolved automatically: a local `./benchmark/` dir if present, else `$REDLINEBENCH_BENCHMARK_DIR`, else downloaded from [`crosbylegal/RedlineBench`](https://huggingface.co/datasets/crosbylegal/RedlineBench).
+The benchmark data is **not** in this repo; it is resolved automatically: a local `./benchmark/` dir if present, else `$REDLINEBENCH_BENCHMARK_DIR`, else downloaded from `[crosbylegal/RedlineBench](https://huggingface.co/datasets/crosbylegal/RedlineBench)`.
 
 One command runs the whole pipeline (download tasks → Harbor agent run → assemble the 3-judge panel verdicts → score → metrics summary) and writes a `metrics_summary.json` (pass `--baseline <metrics_summary.json>` to also print a delta table against a prior run):
 
@@ -110,6 +123,16 @@ redlinebench-reproduce --agent claude-code --model anthropic/claude-opus-4-8 --n
 
 # Cloud-parallel run on Modal
 redlinebench-reproduce --agent claude-code --model anthropic/claude-opus-4-8 --env modal --n-concurrent 8
+
+# OpenRouter-backed opencode GLM 5.2 run on Modal
+redlinebench-reproduce \
+  --agent opencode \
+  --model openrouter/z-ai/glm-5.2 \
+  --env modal \
+  --n-concurrent 70 \
+  --workdir reproduce_out_openrouter_glm52 \
+  --out metrics_summary_openrouter_glm52.json \
+  --agent-env "OPENROUTER_API_KEY=$OPENROUTER_API_KEY"
 
 # One-task smoke test
 redlinebench-reproduce --agent claude-code --model anthropic/claude-opus-4-8 --task redline-s1-t1-g01a
@@ -123,7 +146,7 @@ Harbor supports many [agents](https://www.harborframework.com/docs/agents) (`cod
 
 **Per task** the verifier:
 
-1. **Validity gate**: the output must be a loadable `.docx` containing at least one tracked change _or_ comment attributed to the task's author string. Gate failure → reward 0.
+1. **Validity gate**: the output must be a loadable `.docx` containing at least one tracked change *or* comment attributed to the task's author string. Gate failure → reward 0.
 2. **LLM judge**: the redline is rendered to an inline-annotated view (`~~deletions~~`, `++insertions++`, `{cmt-N}` with a comment appendix) and graded PASS/FAIL against each rubric. Rubrics are weighted 1–10; a small number carry **negative weights** (penalties for edits the attorney flagged as undesirable).
 3. **Score**: `reward = clamp(Σ earned − Σ penalties, 0, Σ positive weights) / Σ positive weights` ∈ [0, 1].
 
@@ -131,13 +154,15 @@ Harbor supports many [agents](https://www.harborframework.com/docs/agents) (`cod
 
 Every rubric criterion maps to one of five evaluation dimensions. Their share of all rubrics across the benchmark:
 
-| Dimension                          | Share of rubrics | What it penalizes                                                                                            |
-| ---------------------------------- | ---------------: | ----------------------------------------------------------------------------------------------------------- |
-| Commercial context                 |            33.4% | Contradicts explicit business instructions (budget caps, go-live dates, deal-breakers); proposes fallbacks outside guardrails |
-| Legal correctness                  |            25.7% | Misstates the law; introduces unenforceable language; creates ambiguity or conflicts elsewhere in the contract            |
-| Negotiation quality                |            17.0% | Over- or under-aggressive for the leverage and stage; concedes key terms too easily; over-lawyers immaterial issues       |
-| Deal-closing orientation           |            13.7% | Optimizes for "winning" every term rather than closing; prolongs the markup with minor, low-impact edits                  |
-| Counterparty-acceptance prediction |            10.2% | Proposes obvious non-starters; fails to recognize already-favorable language; accepts extreme positions without justification |
+
+| Dimension                          | Share of rubrics | What it penalizes                                                                                                             |
+| ---------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Commercial context                 | 33.4%            | Contradicts explicit business instructions (budget caps, go-live dates, deal-breakers); proposes fallbacks outside guardrails |
+| Legal correctness                  | 25.7%            | Misstates the law; introduces unenforceable language; creates ambiguity or conflicts elsewhere in the contract                |
+| Negotiation quality                | 17.0%            | Over- or under-aggressive for the leverage and stage; concedes key terms too easily; over-lawyers immaterial issues           |
+| Deal-closing orientation           | 13.7%            | Optimizes for "winning" every term rather than closing; prolongs the markup with minor, low-impact edits                      |
+| Counterparty-acceptance prediction | 10.2%            | Proposes obvious non-starters; fails to recognize already-favorable language; accepts extreme positions without justification |
+
 
 The reference models run through this pipeline are GPT-5.5, Claude Opus 4.8, Gemini 3.5 Flash, and Claude Fable 5.
 

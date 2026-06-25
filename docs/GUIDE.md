@@ -19,7 +19,8 @@ uv tool install harbor
 
 Copy `.env.template` to `.env` and add the provider keys you need. The verifier
 uses a judge panel across model providers, so reproduction runs need keys for
-the supported judge providers.
+the supported judge providers. OpenRouter-backed `opencode` runs also need
+`OPENROUTER_API_KEY`.
 
 ```bash
 cp .env.template .env
@@ -74,6 +75,20 @@ redlinebench-reproduce \
   --n-concurrent 8
 ```
 
+To route an `opencode` run through OpenRouter, pass the OpenRouter API key.
+This example runs GLM 5.2 with 70 concurrent Modal trials:
+
+```bash
+redlinebench-reproduce \
+  --agent opencode \
+  --model openrouter/z-ai/glm-5.2 \
+  --env modal \
+  --n-concurrent 70 \
+  --workdir reproduce_out_openrouter_glm52 \
+  --out metrics_summary_openrouter_glm52.json \
+  --agent-env "OPENROUTER_API_KEY=$OPENROUTER_API_KEY"
+```
+
 To compare against an earlier metrics summary, pass:
 
 ```bash
@@ -91,6 +106,9 @@ bit-exact test.
 
 - `--task redline-s1-t1-g01a`: run one task instead of the full benchmark.
 - `--env modal`: run through Harbor's Modal environment.
+- `--env-file PATH`: pass environment variables to Harbor; defaults to `.env`
+  when present.
+- `--agent-env KEY=VALUE`: pass an environment variable to the Harbor agent.
 - `--n-concurrent N`: set the number of parallel trials.
 - `--workdir DIR`: choose where `jobs/` and `runs/` are written.
 - `--out PATH`: choose where the metrics summary JSON is written.

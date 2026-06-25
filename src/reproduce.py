@@ -51,8 +51,13 @@ _MODEL_TO_TRAJ_DIR = {
 
 
 def _strip_provider(model: str) -> str:
-    """`anthropic/claude-opus-4-8` → `claude-opus-4-8`."""
-    return model.split("/", 1)[-1]
+    """`anthropic/claude-opus-4-8` → `claude-opus-4-8`.
+
+    OpenRouter/OpenCode model strings can look like
+    `openrouter/~z-ai/glm-5.2`; strip the routing provider while keeping
+    the assembled run layout to one path segment.
+    """
+    return model.split("/", 1)[-1].lstrip("~").replace("/", "-")
 
 
 def _traj_dir_for(model_id: str) -> str:
@@ -66,6 +71,8 @@ def run_harbor(
     model: str,
     n_concurrent: int,
     env: str | None,
+    env_file: Path | None,
+    agent_env: list[str],
     jobs_dir: Path,
 ) -> Path:
     """Invoke `harbor run` and return the created job directory."""
@@ -89,6 +96,10 @@ def run_harbor(
     ]
     if env:
         cmd += ["--env", env]
+    if env_file:
+        cmd += ["--env-file", str(env_file)]
+    for item in agent_env:
+        cmd += ["--ae", item]
     print(f"+ {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
 
@@ -169,6 +180,12 @@ def main() -> int:
                     help="Run a single task (e.g. redline-s1-t1-g01a) instead of all 140.")
     ap.add_argument("--n-concurrent", type=int, default=8)
     ap.add_argument("--env", default=None, help="Harbor environment, e.g. modal.")
+    ap.add_argument("--env-file", default=".env",
+                    help="Environment file to pass to Harbor; set to '' to disable.")
+    ap.add_argument("--agent-env", action="append", default=[],
+                    metavar="KEY=VALUE",
+                    help="Environment variable to pass to the Harbor agent; "
+                         "repeat for multiple values.")
     ap.add_argument("--workdir", default="reproduce_out",
                     help="Where jobs/ and runs/ are written.")
     ap.add_argument("--out", default="metrics_summary.json",
@@ -188,10 +205,14 @@ def main() -> int:
     workdir = Path(args.workdir)
     jobs_dir = workdir / "jobs"
     model_id = _strip_provider(args.model)
+    env_file = Path(args.env_file) if args.env_file else None
+    if env_file and not env_file.exists():
+        env_file = None
 
     job_dir = run_harbor(
         tasks_path, agent=args.agent, model=args.model,
-        n_concurrent=args.n_concurrent, env=args.env, jobs_dir=jobs_dir,
+        n_concurrent=args.n_concurrent, env=args.env,
+        env_file=env_file, agent_env=args.agent_env, jobs_dir=jobs_dir,
     )
     print(f"job: {job_dir}")
 
