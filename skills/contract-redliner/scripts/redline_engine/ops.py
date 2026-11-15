@@ -16,7 +16,7 @@ from typing import Literal, Optional
 
 from docx_revisions import RevisionParagraph
 
-from .anchoring import AnchorError, ResolvedAnchor, resolve
+from .anchoring import AnchorError, ResolvedAnchor, resolve, raw_span
 from .comments import add_top_level_comment, add_comment_reply
 from .document import DocumentView
 
@@ -56,9 +56,10 @@ def replace_text(
     para = view.runtime_paragraph(resolved.paragraph_id)
     try:
         rp = RevisionParagraph.from_paragraph(para)
+        raw_start, raw_end = raw_span(rp.text, resolved.start, resolved.end)
         rp.replace_tracked_at(
-            start=resolved.start,
-            end=resolved.end,
+            start=raw_start,
+            end=raw_end,
             replace_text=new_text,
             author=author,
             index_mode="text",
@@ -98,9 +99,10 @@ def delete_text(
     para = view.runtime_paragraph(resolved.paragraph_id)
     try:
         rp = RevisionParagraph.from_paragraph(para)
+        raw_start, raw_end = raw_span(rp.text, resolved.start, resolved.end)
         rp.add_tracked_deletion(
-            start=resolved.start,
-            end=resolved.end,
+            start=raw_start,
+            end=raw_end,
             author=author,
             index_mode="text",
         )
@@ -148,10 +150,11 @@ def insert_after_text(
     para = view.runtime_paragraph(resolved.paragraph_id)
     try:
         rp = RevisionParagraph.from_paragraph(para)
+        raw_start, raw_end = raw_span(rp.text, resolved.start, resolved.end)
         rp.replace_tracked_at(
-            start=resolved.start,
-            end=resolved.end,
-            replace_text=resolved.normalized_text + new_text,
+            start=raw_start,
+            end=raw_end,
+            replace_text=rp.text[raw_start:raw_end] + new_text,
             author=author,
             index_mode="text",
         )
