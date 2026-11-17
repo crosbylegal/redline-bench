@@ -96,6 +96,9 @@ bit-exact test.
 - `--n-concurrent N`: set the number of parallel trials.
 - `--effort LEVEL`: reasoning effort, forwarded as `--agent-kwarg reasoning_effort=LEVEL`.
 - `--agent-kwarg KEY=VALUE` (repeatable): any extra Harbor agent kwarg.
+- `--agent-env KEY=VALUE` (repeatable): an environment variable for the agent process inside the sandbox,
+  forwarded as `harbor run --agent-env`. Pass secrets as a literal `${VAR}` template (single-quoted) so Harbor
+  resolves them from `.env` at runtime and never writes the value to job files.
 - `--agent-timeout-multiplier X`: scale the per-task agent timeout for slow models.
 - `--workdir DIR`: choose where `jobs/` and `runs/` are written.
 - `--out PATH`: choose where the metrics summary JSON is written.
@@ -117,9 +120,12 @@ redlinebench-rerun --from-job reproduce_out/jobs/<job> \
   --include-errors --agent-timeout-multiplier 3
 ```
 
-Agent, model, environment, agent kwargs (such as `reasoning_effort`), and the
-timeout multiplier are inherited from the original job; any of them can be
-overridden on the command line. Pass `--tasks NAME` or `--tasks-file PATH` to
+Agent, model, environment, agent kwargs (such as `reasoning_effort`), agent env,
+and the timeout multiplier are inherited from the original job; any of them can be
+overridden on the command line. Harbor saves secret-looking agent env values (any
+key containing `KEY`, `TOKEN`, `SECRET`, ...) masked unless they were passed as a
+`${VAR}` template, so the rerun stops and asks you to pass those again with
+`--agent-env`. Pass `--tasks NAME` or `--tasks-file PATH` to
 choose the tasks explicitly instead of auto-detecting them. Merged output is
 written to `reproduce_out/runs/rerun/` (see `--runs-id`).
 

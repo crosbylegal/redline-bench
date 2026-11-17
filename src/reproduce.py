@@ -149,7 +149,8 @@ def read_job_harbor_config(job_dir: Path) -> dict:
     """Read the Harbor run settings from the first trial ``config.json`` in a job.
 
     Returns ``agent``, ``model``, ``env``, ``agent_kwargs`` (as ``KEY=VALUE``
-    strings for ``--agent-kwarg``) and ``agent_timeout_multiplier``.
+    strings for ``--agent-kwarg``), ``agent_env`` (as ``KEY=VALUE`` strings for
+    ``--agent-env``) and ``agent_timeout_multiplier``.
     """
     for trial in sorted(job_dir.iterdir()):
         cfg_path = trial / "config.json"
@@ -170,6 +171,7 @@ def read_job_harbor_config(job_dir: Path) -> dict:
                 f"{k}={v if isinstance(v, str) else json.dumps(v)}"
                 for k, v in kwargs.items()
             ],
+            "agent_env": [f"{k}={v}" for k, v in (agent.get("env") or {}).items()],
             "agent_timeout_multiplier": cfg.get("agent_timeout_multiplier"),
         }
     raise RuntimeError(f"no trial config.json found under {job_dir}")
@@ -195,6 +197,7 @@ def run_harbor(
     include_tasks: Sequence[str] | None = None,
     agent_timeout_multiplier: float | None = None,
     agent_kwargs: Sequence[str] | None = None,
+    agent_env: Sequence[str] | None = None,
 ) -> Path:
     """Invoke `harbor run` and return the created job directory."""
     if shutil.which("harbor") is None:
@@ -221,6 +224,9 @@ def run_harbor(
     if agent_kwargs:
         for kw in agent_kwargs:
             cmd += ["--agent-kwarg", kw]
+    if agent_env:
+        for kv in agent_env:
+            cmd += ["--agent-env", kv]
     if agent_timeout_multiplier is not None:
         cmd += ["--agent-timeout-multiplier", str(agent_timeout_multiplier)]
     if env:
@@ -379,6 +385,10 @@ def main() -> int:
     ap.add_argument("--agent-kwarg", action="append", default=[], metavar="KEY=VALUE",
                     help="Extra agent kwarg forwarded to `harbor run --agent-kwarg` "
                          "(repeatable).")
+    ap.add_argument("--agent-env", action="append", default=[], metavar="KEY=VALUE",
+                    help="Environment variable for the agent process, forwarded to "
+                         "`harbor run --agent-env` (repeatable), e.g. "
+                         "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000.")
     ap.add_argument("--agent-timeout-multiplier", type=float, default=None,
                     help="Multiply the per-task agent timeout (e.g. 3 for slow "
                          "high-effort models that time out at the default 1.0).")
@@ -426,6 +436,7 @@ def main() -> int:
         jobs_dir=jobs_dir, include_tasks=include_tasks,
         agent_timeout_multiplier=args.agent_timeout_multiplier,
         agent_kwargs=agent_kwargs,
+        agent_env=args.agent_env,
     )
     print(f"job: {job_dir}")
 
