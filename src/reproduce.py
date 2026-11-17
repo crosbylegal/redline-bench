@@ -64,14 +64,16 @@ def _traj_dir_for(model_id: str) -> str:
 
 # Agent env keys whose values are treated as secrets when printed.
 _SENSITIVE_ENV_KEY = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH", re.IGNORECASE)
-_ENV_TEMPLATE = re.compile(r"\$\{[^}]+\}")
+# Only a bare reference is safe to print; `${VAR:-fallback}` can carry a literal secret.
+_ENV_TEMPLATE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
 
 
 def redact_agent_env(kv: str) -> str:
     """``KEY=VALUE`` for display, with the value masked when the key looks secret.
 
-    ``${VAR}`` templates are shown as-is since they carry no secret; only the
-    printed form changes, never what is passed to Harbor.
+    A bare ``${VAR}`` reference is shown as-is since it carries no secret;
+    anything else under a secret-looking key, defaults included, is masked.
+    Only the printed form changes, never what is passed to Harbor.
     """
     key, sep, value = kv.partition("=")
     if sep and value and _SENSITIVE_ENV_KEY.search(key) and not _ENV_TEMPLATE.fullmatch(value):

@@ -169,6 +169,9 @@ def test_redact_agent_env_masks_secret_literals_only() -> None:
     assert reproduce.redact_agent_env("SERVICE_TOKEN=xyz") == "SERVICE_TOKEN=****"
     assert reproduce.redact_agent_env("CUSTOM_API_KEY=${CUSTOM_API_KEY}") == "CUSTOM_API_KEY=${CUSTOM_API_KEY}"
     assert reproduce.redact_agent_env("GOOGLE_CLOUD_PROJECT=demo") == "GOOGLE_CLOUD_PROJECT=demo"
+    # A default inside the template can be a literal secret, so only a bare reference stays visible.
+    assert reproduce.redact_agent_env("CUSTOM_API_KEY=${CUSTOM_API_KEY:-abc123}") == "CUSTOM_API_KEY=****"
+    assert reproduce.redact_agent_env("CUSTOM_API_KEY=prefix-${CUSTOM_API_KEY}") == "CUSTOM_API_KEY=****"
 
 
 def test_run_harbor_prints_redacted_command_but_passes_real_values(
