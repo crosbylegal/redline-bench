@@ -161,6 +161,37 @@ def test_masked_agent_env_cleared_by_override() -> None:
     assert rerun.masked_agent_env(merged) == []
 
 
+def test_redact_agent_env_masks_secret_literals_only() -> None:
+    assert reproduce.redact_agent_env("CUSTOM_API_KEY=abc123") == "CUSTOM_API_KEY=****"
+    assert reproduce.redact_agent_env("SERVICE_TOKEN=xyz") == "SERVICE_TOKEN=****"
+    assert reproduce.redact_agent_env("CUSTOM_API_KEY=${CUSTOM_API_KEY}") == "CUSTOM_API_KEY=${CUSTOM_API_KEY}"
+    assert reproduce.redact_agent_env("GOOGLE_CLOUD_PROJECT=demo") == "GOOGLE_CLOUD_PROJECT=demo"
+
+
+def test_run_harbor_prints_redacted_command_but_passes_real_values(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    jobs_dir = tmp_path / "jobs"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, check):
+        seen.append(cmd)
+        (jobs_dir / "job-1").mkdir()
+
+    monkeypatch.setattr(reproduce.shutil, "which", lambda _: "/usr/bin/harbor")
+    monkeypatch.setattr(reproduce.subprocess, "run", fake_run)
+    reproduce.run_harbor(
+        tmp_path / "tasks", agent="opencode", model="google/x", n_concurrent=1,
+        env=None, env_file=None, jobs_dir=jobs_dir,
+        agent_env=["CUSTOM_API_KEY=abc123", "GOOGLE_CLOUD_PROJECT=demo"],
+    )
+    printed = capsys.readouterr().out
+    assert "abc123" not in printed
+    assert "--agent-env CUSTOM_API_KEY=****" in printed
+    assert "--agent-env GOOGLE_CLOUD_PROJECT=demo" in printed
+    assert "CUSTOM_API_KEY=abc123" in seen[0]
+
+
 def test_merge_jobs_into_runs(tmp_path: Path) -> None:
     base = tmp_path / "base"
     rerun_job = tmp_path / "rerun"

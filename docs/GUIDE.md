@@ -98,7 +98,8 @@ bit-exact test.
 - `--agent-kwarg KEY=VALUE` (repeatable): any extra Harbor agent kwarg.
 - `--agent-env KEY=VALUE` (repeatable): an environment variable for the agent process inside the sandbox,
   forwarded as `harbor run --agent-env`. Pass secrets as a literal `${VAR}` template (single-quoted) so Harbor
-  resolves them from `.env` at runtime and never writes the value to job files.
+  resolves them from `.env` at runtime and never writes the value to job files. Values of secret-looking keys are
+  masked as `****` in the command and summaries these tools print.
 - `--agent-timeout-multiplier X`: scale the per-task agent timeout for slow models.
 - `--workdir DIR`: choose where `jobs/` and `runs/` are written.
 - `--out PATH`: choose where the metrics summary JSON is written.

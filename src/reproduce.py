@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Sequence
@@ -59,6 +60,32 @@ def _strip_provider(model: str) -> str:
 
 def _traj_dir_for(model_id: str) -> str:
     return _MODEL_TO_TRAJ_DIR.get(model_id, model_id)
+
+
+# Agent env keys whose values are treated as secrets when printed.
+_SENSITIVE_ENV_KEY = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH", re.IGNORECASE)
+_ENV_TEMPLATE = re.compile(r"\$\{[^}]+\}")
+
+
+def redact_agent_env(kv: str) -> str:
+    """``KEY=VALUE`` for display, with the value masked when the key looks secret.
+
+    ``${VAR}`` templates are shown as-is since they carry no secret; only the
+    printed form changes, never what is passed to Harbor.
+    """
+    key, sep, value = kv.partition("=")
+    if sep and value and _SENSITIVE_ENV_KEY.search(key) and not _ENV_TEMPLATE.fullmatch(value):
+        return f"{key}=****"
+    return kv
+
+
+def _display_cmd(cmd: Sequence[str]) -> str:
+    """The command as printed, with ``--agent-env`` secrets redacted."""
+    shown = list(cmd)
+    for i in range(1, len(shown)):
+        if shown[i - 1] == "--agent-env":
+            shown[i] = redact_agent_env(shown[i])
+    return " ".join(shown)
 
 
 def task_name_from_trial_dir(trial_dir: Path) -> str | None:
@@ -233,7 +260,7 @@ def run_harbor(
         cmd += ["--env", env]
     if env_file is not None:
         cmd += ["--env-file", str(env_file)]
-    print(f"+ {' '.join(cmd)}")
+    print(f"+ {_display_cmd(cmd)}")
     subprocess.run(cmd, check=True)
 
     after = [p for p in jobs_dir.iterdir() if p.is_dir() and p.name not in before]

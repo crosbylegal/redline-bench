@@ -35,6 +35,7 @@ from reproduce import (
     job_tasks_root,
     merge_jobs_into_runs,
     read_job_harbor_config,
+    redact_agent_env,
     resolve_env_file,
     run_harbor,
 )
@@ -222,7 +223,8 @@ def main() -> int:
         if masked:
             raise ValueError(
                 f"agent env {', '.join(masked)} was saved masked by Harbor; "
-                "pass it again with --agent-env KEY=VALUE"
+                "pass it again with --agent-env 'KEY=${KEY}' (resolved from .env) "
+                "or --agent-env KEY=VALUE"
             )
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"ERROR: {exc}")
@@ -250,7 +252,7 @@ def main() -> int:
     if agent_kwargs:
         print(f"agent kwargs: {' '.join(agent_kwargs)}")
     if agent_env:
-        print(f"agent env: {' '.join(agent_env)}")
+        print(f"agent env: {' '.join(redact_agent_env(kv) for kv in agent_env)}")
     if timeout_multiplier is not None:
         print(f"agent timeout multiplier: {timeout_multiplier}")
     print(f"tasks to rerun ({len(task_names)}):")
