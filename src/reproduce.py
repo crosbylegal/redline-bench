@@ -261,7 +261,14 @@ def run_harbor(
     if env_file is not None:
         cmd += ["--env-file", str(env_file)]
     print(f"+ {_display_cmd(cmd)}")
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as exc:
+        # CalledProcessError carries the raw argv, secrets included; report the
+        # redacted command and drop the original from the traceback.
+        raise RuntimeError(
+            f"harbor run failed (exit {exc.returncode}): {_display_cmd(cmd)}"
+        ) from None
 
     after = [p for p in jobs_dir.iterdir() if p.is_dir() and p.name not in before]
     if not after:

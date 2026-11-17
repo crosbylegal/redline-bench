@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+
+import pytest
 
 import reproduce
 import rerun
@@ -190,6 +193,24 @@ def test_run_harbor_prints_redacted_command_but_passes_real_values(
     assert "--agent-env CUSTOM_API_KEY=****" in printed
     assert "--agent-env GOOGLE_CLOUD_PROJECT=demo" in printed
     assert "CUSTOM_API_KEY=abc123" in seen[0]
+
+
+def test_run_harbor_failure_reports_redacted_command(tmp_path: Path, monkeypatch) -> None:
+    def failing_run(cmd, check):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(reproduce.shutil, "which", lambda _: "/usr/bin/harbor")
+    monkeypatch.setattr(reproduce.subprocess, "run", failing_run)
+    with pytest.raises(RuntimeError) as info:
+        reproduce.run_harbor(
+            tmp_path / "tasks", agent="opencode", model="google/x", n_concurrent=1,
+            env=None, env_file=None, jobs_dir=tmp_path / "jobs",
+            agent_env=["CUSTOM_API_KEY=abc123"],
+        )
+    assert "abc123" not in str(info.value)
+    assert "CUSTOM_API_KEY=****" in str(info.value)
+    assert "exit 1" in str(info.value)
+    assert info.value.__cause__ is None and info.value.__suppress_context__
 
 
 def test_merge_jobs_into_runs(tmp_path: Path) -> None:
