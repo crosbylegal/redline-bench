@@ -25,10 +25,18 @@ your work is attributed.
    ```
 
    Prints the contract as Markdown. Every paragraph has a stable ID like
-   `[p-027]`. Paragraphs carrying existing tracked changes or comments are
-   flagged `{REVS,CMTS}`, and an appendix lists each existing comment
-   (`cmt-N`, with author and thread parent) and tracked change (`rev-N`, with
-   author and text).
+   `[p-027]`, including paragraphs inside tables: each table-cell paragraph
+   is its own line, in document order, without row or column labels.
+   Paragraphs carrying existing tracked changes or comments are flagged
+   `{REVS,CMTS}`, and their tracked changes show inline as `++inserted++`
+   and `~~deleted~~`. An appendix lists each existing comment (`cmt-N`, with
+   author and thread parent) and tracked change (`rev-N`, with author and
+   text).
+
+   The `++…++` and `~~…~~` spans are display only. An anchor matches the
+   paragraph's text with those spans removed, so text inside one cannot be
+   anchored, and an anchor should not reach across one (details:
+   [references/anchors.md](references/anchors.md)).
 
 2. **Apply a batch of tracked changes:**
 
@@ -61,7 +69,8 @@ your work is attributed.
 
 3. **If an edit fails, fix only that edit and resubmit it.** A failed anchor
    returns `status: "anchor_failed"` with the reason — `text_not_found` (your
-   text isn't a verbatim substring of that paragraph) or `ambiguous` (it
+   text isn't a verbatim substring of that paragraph, or it includes text
+   from inside a `++…++`/`~~…~~` span) or `ambiguous` (it
    matches more than once; candidates are listed). Re-read the paragraph in
    the `read_document.py` output, tighten the anchor (add `paragraph_id`,
    `context_before`/`context_after`, or `occurrence`), and resubmit a batch
@@ -86,6 +95,9 @@ your work is attributed.
    python scripts/mark_reserved.py CONTRACT.docx --start p-036 --end p-037 \
        --comment "We removed this section because ..." --author "Jane (AgentCo Legal)"
    ```
+
+   The range covers every paragraph from `--start` to `--end`, including
+   table-cell paragraphs that fall between them.
 
 6. **Verify before finishing.** Re-run `read_document.py` and confirm the
    appendix shows your tracked changes under your author name and your
