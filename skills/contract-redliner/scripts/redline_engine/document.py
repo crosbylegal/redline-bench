@@ -85,7 +85,7 @@ class DocumentView:
         paragraphs: list[ParagraphInfo] = []
         paragraph_objects: dict[str, Paragraph] = {}
 
-        for i, p in enumerate(doc.paragraphs):
+        for i, p in enumerate(_iter_all_paragraphs(doc)):
             pid = _PARAGRAPH_ID_FMT.format(i)
             info = ParagraphInfo(
                 id=pid,
@@ -93,7 +93,8 @@ class DocumentView:
                 text=p.text,
                 style=p.style.name if p.style else "",
                 is_empty=not p.text.strip(),
-                has_revisions=_paragraph_has_revisions(p),
+                has_revisions=_paragraph_has_revisions(p)
+                or _row_revision(p) is not None,
                 has_comments=_paragraph_has_comments(p),
                 list_level=_paragraph_list_level(p),
             )
@@ -128,6 +129,11 @@ class DocumentView:
         Blank paragraphs are omitted from the visible output but their IDs are
         preserved (skipped) so paragraph IDs match the underlying document.
 
+        Paragraphs carrying tracked changes show them inline: inserted text as
+        `++inserted++` and deleted text as `~~deleted~~`, so the body reads as
+        the running document. A paragraph whose only text is a pending
+        insertion or deletion is listed too.
+
         If `max_chars` is set, truncates with a sentinel — useful for prompt
         budgeting. The LargeCo template is ~90 KB; most current frontier models
         comfortably fit the whole thing, but smaller models or budget runs may
@@ -135,7 +141,8 @@ class DocumentView:
         """
         lines: list[str] = [f"# {self.docx_path.name}", ""]
         for p in self.paragraphs:
-            if p.is_empty:
+            text = self._body_text(p)
+            if not text.strip():
                 continue
             flags = []
             if p.has_revisions:
@@ -144,7 +151,7 @@ class DocumentView:
                 flags.append("CMTS")
             flag_str = f" {{{','.join(flags)}}}" if flags else ""
             indent = "  " * (p.list_level or 0)
-            lines.append(f"[{p.id}] ({p.style}){flag_str} {indent}{p.text}")
+            lines.append(f"[{p.id}] ({p.style}){flag_str} {indent}{text}")
 
         if self.comments:
             lines.append("")
@@ -170,10 +177,27 @@ class DocumentView:
             out = out[: max_chars - 100] + "\n\n[... document truncated ...]"
         return out
 
+    def _body_text(self, p: ParagraphInfo) -> str:
+        """Text `to_markdown` lists for `p`, with tracked changes inline."""
+        if p.has_revisions:
+            p_obj = self._paragraph_objects[p.id]
+            row_mark = _row_revision(p_obj)
+            if row_mark is not None and not _paragraph_has_revisions(p_obj):
+                deleted = etree.QName(row_mark).localname == "del"
+                text = _row_paragraph_text(p_obj._p, deleted)
+                if not text:
+                    return ""
+                marker = "~~" if deleted else "++"
+                return f"{marker}{text}{marker}"
+            return _render_with_revisions(p_obj._p)
+        return p.text
+
     def stats(self) -> dict[str, int]:
         return {
             "paragraphs": len(self.paragraphs),
-            "non_empty_paragraphs": sum(1 for p in self.paragraphs if not p.is_empty),
+            "non_empty_paragraphs": sum(
+                1 for p in self.paragraphs if self._body_text(p).strip()
+            ),
             "existing_comments": len(self.comments),
             "existing_revisions": len(self.revisions),
         }
@@ -182,11 +206,113 @@ class DocumentView:
 # --- Paragraph metadata helpers -------------------------------------------- #
 
 
+def _iter_all_paragraphs(doc: DocxDocument) -> Iterable[Paragraph]:
+    """Yield body paragraphs in document order, including table-cell paragraphs.
+
+    `doc.paragraphs` returns only the direct children of the body, so text and
+    tracked changes inside `<w:tbl>` (SLA tables, credit tables, signature
+    grids) never reach the reader, the anchoring code or the judge view.
+    Paragraphs nested inside another paragraph (text boxes) are skipped so
+    their text is not emitted twice.
+    """
+    p_tag = qn("w:p")
+    for p_el in doc.element.body.iter(p_tag):
+        if any(a.tag == p_tag for a in p_el.iterancestors()):
+            continue
+        yield Paragraph(p_el, doc._body)  # noqa: SLF001
+
+
 def _paragraph_has_revisions(p: Paragraph) -> bool:
     for tag in ("w:ins", "w:del", "w:moveFrom", "w:moveTo"):
         if next(p._p.iter(qn(tag)), None) is not None:
             return True
     return False
+
+
+def _row_revision(p: Paragraph) -> etree._Element | None:
+    """Return the `w:ins` or `w:del` mark of a table row that contains `p`.
+
+    Word records an inserted or deleted table row in the row properties
+    (`w:tr/w:trPr/w:ins` or `w:trPr/w:del`). The text in that row need not
+    carry a run-level mark of its own, so without this check a deleted row
+    would be listed as live text. A paragraph in such a row that has no
+    run-level mark is shown wrapped in full; one that has run-level marks is
+    rendered from them, as in any other paragraph. Rows of enclosing tables
+    are checked too.
+    """
+    for anc in p._p.iterancestors(qn("w:tr")):
+        tr_pr = anc.find(qn("w:trPr"))
+        if tr_pr is None:
+            continue
+        for tag in ("w:del", "w:ins"):
+            mark = tr_pr.find(qn(tag))
+            if mark is not None:
+                return mark
+    return None
+
+
+def _row_paragraph_text(p_el: etree._Element, deleted: bool) -> str:
+    """Text of a paragraph in an inserted or deleted row.
+
+    For a deleted row, all text (including `w:delText`) is returned. For an
+    inserted row, text inside run-level deletions is left out.
+    """
+    parts: list[str] = []
+    skip = (qn("w:del"), qn("w:moveFrom"))
+    for r in p_el.iter(qn("w:r")):
+        if not deleted and any(a.tag in skip for a in r.iterancestors()):
+            continue
+        parts.append(_run_text(r))
+    return "".join(parts)
+
+
+def _render_with_revisions(el: etree._Element) -> str:
+    """Return the text of `el` with tracked changes marked inline.
+
+    Covers the same content as `Paragraph.text` (runs and hyperlinks) and adds
+    the runs inside `w:ins`/`w:moveTo` as `++text++` and inside
+    `w:del`/`w:moveFrom` as `~~text~~`. Adjacent changes of the same kind are
+    shown as one span. Nested revisions (a deletion of another author's
+    insertion) are rendered recursively.
+    """
+    segments: list[list[str]] = []  # [marker, text]; marker "" for plain text
+
+    def add(marker: str, text: str) -> None:
+        if not text:
+            return
+        if segments and segments[-1][0] == marker:
+            segments[-1][1] += text
+        else:
+            segments.append([marker, text])
+
+    for child in el.iterchildren():
+        tag = child.tag
+        if tag == qn("w:r"):
+            add("", _run_text(child))
+        elif tag == qn("w:hyperlink"):
+            add("", _render_with_revisions(child))
+        elif tag in (qn("w:ins"), qn("w:moveTo")):
+            add("++", _render_with_revisions(child))
+        elif tag in (qn("w:del"), qn("w:moveFrom")):
+            add("~~", _render_with_revisions(child))
+    return "".join(f"{m}{t}{m}" for m, t in segments)
+
+
+def _run_text(r: etree._Element) -> str:
+    """Text of one `w:r`, as python-docx renders it, plus any `w:delText`."""
+    parts: list[str] = []
+    for e in r.iterchildren():
+        if e.tag in (qn("w:t"), qn("w:delText")):
+            parts.append(e.text or "")
+        elif e.tag in (
+            qn("w:br"),
+            qn("w:cr"),
+            qn("w:noBreakHyphen"),
+            qn("w:ptab"),
+            qn("w:tab"),
+        ):
+            parts.append(str(e))
+    return "".join(parts)
 
 
 def _paragraph_has_comments(p: Paragraph) -> bool:
@@ -381,4 +507,36 @@ def _enumerate_revisions(
                         paragraph_ids=[pi.id],
                     )
                 )
+    # Row-level insertions and deletions (`w:trPr/w:ins`, `w:trPr/w:del`),
+    # listed once per row with the text of every paragraph in the row.
+    row_revisions: dict[int, ExistingRevision] = {}
+    for pi in paragraphs:
+        p = paragraph_objects[pi.id]
+        mark = _row_revision(p)
+        if mark is None:
+            continue
+        try:
+            rid = int(mark.get(qn("w:id")))
+        except (TypeError, ValueError):
+            continue
+        deleted = etree.QName(mark).localname == "del"
+        text = _row_paragraph_text(p._p, deleted)
+        rev = row_revisions.get(rid)
+        if rev is None:
+            if rid in seen_ids:
+                continue
+            seen_ids.add(rid)
+            rev = ExistingRevision(
+                id=rid,
+                type=etree.QName(mark).localname,
+                author=mark.get(qn("w:author"), ""),
+                text=text,
+                paragraph_ids=[pi.id],
+            )
+            row_revisions[rid] = rev
+            out.append(rev)
+        else:
+            if text:
+                rev.text = f"{rev.text} | {text}" if rev.text else text
+            rev.paragraph_ids.append(pi.id)
     return out
