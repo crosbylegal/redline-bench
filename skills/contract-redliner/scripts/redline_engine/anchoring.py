@@ -57,6 +57,25 @@ def normalize(text: str) -> str:
     return text.strip()
 
 
+def raw_span(raw_text: str, start: int, end: int) -> tuple[int, int]:
+    """Map a [start, end) span of `normalize(raw_text)` back to offsets in `raw_text`."""
+    offsets: list[int] = []
+    prev_ws = True  # leading whitespace is stripped by normalize()
+    for i, ch in enumerate(raw_text):
+        if _WHITESPACE_RE.fullmatch(ch.translate(_QUOTE_MAP)):
+            if not prev_ws:
+                offsets.append(i)
+            prev_ws = True
+        else:
+            offsets.append(i)
+            prev_ws = False
+    if prev_ws and offsets and _WHITESPACE_RE.fullmatch(raw_text[offsets[-1]].translate(_QUOTE_MAP)):
+        offsets.pop()  # trailing whitespace is stripped by normalize()
+    if len(offsets) != len(normalize(raw_text)):
+        raise ValueError("cannot map normalized offsets back to the paragraph text")
+    return offsets[start], offsets[end - 1] + 1
+
+
 @dataclass
 class ResolvedAnchor:
     paragraph_id: str
