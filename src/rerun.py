@@ -4,9 +4,10 @@
 grade, reruns them in a single Harbor job, then merges the base job with
 the rerun job for metrics.
 
-Agent, model, environment, agent kwargs (e.g. ``reasoning_effort``) and the
-agent timeout multiplier are inherited from the original job unless
-overridden on the command line.
+Agent, model, environment, agent kwargs (e.g. ``reasoning_effort``), agent
+env and the agent timeout multiplier are inherited from the original job
+unless overridden on the command line. Harbor saves secret-looking agent env
+values masked, so those must be passed again with ``--agent-env``.
 
 Example:
     # rerun every task that never produced a grade
@@ -21,6 +22,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 from pathlib import Path
 
@@ -33,6 +35,7 @@ from reproduce import (
     job_tasks_root,
     merge_jobs_into_runs,
     read_job_harbor_config,
+    redact_agent_env,
     resolve_env_file,
     run_harbor,
 )
@@ -81,6 +84,20 @@ def merge_agent_kwargs(inherited: list[str], overrides: list[str]) -> list[str]:
             raise ValueError(f"agent kwarg must be KEY=VALUE, got {kw!r}")
         merged[key] = kw
     return list(merged.values())
+
+
+def masked_agent_env(env: list[str]) -> list[str]:
+    """Keys whose ``KEY=VALUE`` value is Harbor's redaction of a secret-looking env var.
+
+    Harbor saves sensitive agent env (keys containing TOKEN, KEY, SECRET, ...) as
+    ``****`` or ``abcd****xyz`` unless the value is a ``${VAR}`` template, so
+    reusing it verbatim would hand the agent the mask instead of the value.
+    """
+    return [
+        key
+        for key, _, value in (kv.partition("=") for kv in env)
+        if re.fullmatch(r"(.{4})?\*{4}(.{3})?", value)
+    ]
 
 
 def main() -> int:
@@ -141,6 +158,14 @@ def main() -> int:
              "(repeatable). Overrides the same key from --from-job.",
     )
     ap.add_argument(
+        "--agent-env",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Agent environment variable forwarded to `harbor run --agent-env` "
+             "(repeatable). Overrides the same key from --from-job.",
+    )
+    ap.add_argument(
         "--agent-timeout-multiplier",
         type=float,
         default=None,
@@ -193,6 +218,14 @@ def main() -> int:
         if args.effort:
             overrides.append(f"reasoning_effort={args.effort}")
         agent_kwargs = merge_agent_kwargs(job_cfg["agent_kwargs"], overrides)
+        agent_env = merge_agent_kwargs(job_cfg["agent_env"], list(args.agent_env))
+        masked = masked_agent_env(agent_env)
+        if masked:
+            raise ValueError(
+                f"agent env {', '.join(masked)} was saved masked by Harbor; "
+                "pass it again with --agent-env 'KEY=${KEY}' (resolved from .env) "
+                "or --agent-env KEY=VALUE"
+            )
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"ERROR: {exc}")
         return 1
@@ -218,6 +251,8 @@ def main() -> int:
     print(f"agent: {agent}  model: {model}  env: {env}")
     if agent_kwargs:
         print(f"agent kwargs: {' '.join(agent_kwargs)}")
+    if agent_env:
+        print(f"agent env: {' '.join(redact_agent_env(kv) for kv in agent_env)}")
     if timeout_multiplier is not None:
         print(f"agent timeout multiplier: {timeout_multiplier}")
     print(f"tasks to rerun ({len(task_names)}):")
@@ -250,6 +285,7 @@ def main() -> int:
         include_tasks=task_names,
         agent_timeout_multiplier=timeout_multiplier,
         agent_kwargs=agent_kwargs,
+        agent_env=agent_env,
     )
     print(f"rerun job: {rerun_job}")
 

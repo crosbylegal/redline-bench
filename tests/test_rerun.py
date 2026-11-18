@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+
+import pytest
 
 import reproduce
 import rerun
@@ -16,6 +19,7 @@ def _trial(
     graded: bool = True,
     error: str | None = None,
     agent_kwargs: dict | None = None,
+    agent_env: dict | None = None,
     agent_timeout_multiplier: float | None = None,
     suffix: str = "abc123",
     docx: bool = False,
@@ -29,6 +33,7 @@ def _trial(
                     "name": "claude-code",
                     "model_name": "anthropic/claude-opus-4-8",
                     "kwargs": agent_kwargs or {},
+                    **({"env": agent_env} if agent_env else {}),
                 },
                 "environment": {"type": "modal"},
                 "agent_timeout_multiplier": agent_timeout_multiplier,
@@ -114,8 +119,20 @@ def test_read_job_harbor_config(tmp_path: Path) -> None:
         "model": "anthropic/claude-opus-4-8",
         "env": "modal",
         "agent_kwargs": ["reasoning_effort=high", "max_turns=50"],
+        "agent_env": [],
         "agent_timeout_multiplier": 3.0,
     }
+
+
+def test_read_job_harbor_config_agent_env(tmp_path: Path) -> None:
+    job = tmp_path / "job"
+    _trial(
+        job,
+        "redline-s1-t1-g01a",
+        agent_env={"OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX": "128000"},
+    )
+    cfg = reproduce.read_job_harbor_config(job)
+    assert cfg["agent_env"] == ["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000"]
 
 
 def test_merge_agent_kwargs_overrides_by_key() -> None:
@@ -124,6 +141,79 @@ def test_merge_agent_kwargs_overrides_by_key() -> None:
         ["reasoning_effort=xhigh"],
     )
     assert merged == ["reasoning_effort=xhigh", "max_turns=50"]
+
+
+def test_masked_agent_env_flags_harbor_redactions_only() -> None:
+    env = [
+        "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=****",
+        "GOOGLE_VERTEX_API_KEY=AQ.A****xyz",
+        "TEMPLATED_API_KEY=${TEMPLATED_API_KEY}",
+        "GOOGLE_CLOUD_PROJECT=crosby-prod",
+    ]
+    assert rerun.masked_agent_env(env) == [
+        "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX",
+        "GOOGLE_VERTEX_API_KEY",
+    ]
+
+
+def test_masked_agent_env_cleared_by_override() -> None:
+    merged = rerun.merge_agent_kwargs(
+        ["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=****"],
+        ["OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000"],
+    )
+    assert rerun.masked_agent_env(merged) == []
+
+
+def test_redact_agent_env_masks_secret_literals_only() -> None:
+    assert reproduce.redact_agent_env("CUSTOM_API_KEY=abc123") == "CUSTOM_API_KEY=****"
+    assert reproduce.redact_agent_env("SERVICE_TOKEN=xyz") == "SERVICE_TOKEN=****"
+    assert reproduce.redact_agent_env("CUSTOM_API_KEY=${CUSTOM_API_KEY}") == "CUSTOM_API_KEY=${CUSTOM_API_KEY}"
+    assert reproduce.redact_agent_env("GOOGLE_CLOUD_PROJECT=demo") == "GOOGLE_CLOUD_PROJECT=demo"
+    # A default inside the template can be a literal secret, so only a bare reference stays visible.
+    assert reproduce.redact_agent_env("CUSTOM_API_KEY=${CUSTOM_API_KEY:-abc123}") == "CUSTOM_API_KEY=****"
+    assert reproduce.redact_agent_env("CUSTOM_API_KEY=prefix-${CUSTOM_API_KEY}") == "CUSTOM_API_KEY=****"
+
+
+def test_run_harbor_prints_redacted_command_but_passes_real_values(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    jobs_dir = tmp_path / "jobs"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, check):
+        seen.append(cmd)
+        (jobs_dir / "job-1").mkdir()
+
+    monkeypatch.setattr(reproduce.shutil, "which", lambda _: "/usr/bin/harbor")
+    monkeypatch.setattr(reproduce.subprocess, "run", fake_run)
+    reproduce.run_harbor(
+        tmp_path / "tasks", agent="opencode", model="google/x", n_concurrent=1,
+        env=None, env_file=None, jobs_dir=jobs_dir,
+        agent_env=["CUSTOM_API_KEY=abc123", "GOOGLE_CLOUD_PROJECT=demo"],
+    )
+    printed = capsys.readouterr().out
+    assert "abc123" not in printed
+    assert "--agent-env CUSTOM_API_KEY=****" in printed
+    assert "--agent-env GOOGLE_CLOUD_PROJECT=demo" in printed
+    assert "CUSTOM_API_KEY=abc123" in seen[0]
+
+
+def test_run_harbor_failure_reports_redacted_command(tmp_path: Path, monkeypatch) -> None:
+    def failing_run(cmd, check):
+        raise subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(reproduce.shutil, "which", lambda _: "/usr/bin/harbor")
+    monkeypatch.setattr(reproduce.subprocess, "run", failing_run)
+    with pytest.raises(RuntimeError) as info:
+        reproduce.run_harbor(
+            tmp_path / "tasks", agent="opencode", model="google/x", n_concurrent=1,
+            env=None, env_file=None, jobs_dir=tmp_path / "jobs",
+            agent_env=["CUSTOM_API_KEY=abc123"],
+        )
+    assert "abc123" not in str(info.value)
+    assert "CUSTOM_API_KEY=****" in str(info.value)
+    assert "exit 1" in str(info.value)
+    assert info.value.__cause__ is None and info.value.__suppress_context__
 
 
 def test_merge_jobs_into_runs(tmp_path: Path) -> None:

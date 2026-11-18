@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import re
 import shutil
 import subprocess
 from collections.abc import Sequence
@@ -59,6 +60,34 @@ def _strip_provider(model: str) -> str:
 
 def _traj_dir_for(model_id: str) -> str:
     return _MODEL_TO_TRAJ_DIR.get(model_id, model_id)
+
+
+# Agent env keys whose values are treated as secrets when printed.
+_SENSITIVE_ENV_KEY = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH", re.IGNORECASE)
+# Only a bare reference is safe to print; `${VAR:-fallback}` can carry a literal secret.
+_ENV_TEMPLATE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def redact_agent_env(kv: str) -> str:
+    """``KEY=VALUE`` for display, with the value masked when the key looks secret.
+
+    A bare ``${VAR}`` reference is shown as-is since it carries no secret;
+    anything else under a secret-looking key, defaults included, is masked.
+    Only the printed form changes, never what is passed to Harbor.
+    """
+    key, sep, value = kv.partition("=")
+    if sep and value and _SENSITIVE_ENV_KEY.search(key) and not _ENV_TEMPLATE.fullmatch(value):
+        return f"{key}=****"
+    return kv
+
+
+def _display_cmd(cmd: Sequence[str]) -> str:
+    """The command as printed, with ``--agent-env`` secrets redacted."""
+    shown = list(cmd)
+    for i in range(1, len(shown)):
+        if shown[i - 1] == "--agent-env":
+            shown[i] = redact_agent_env(shown[i])
+    return " ".join(shown)
 
 
 def task_name_from_trial_dir(trial_dir: Path) -> str | None:
@@ -149,7 +178,8 @@ def read_job_harbor_config(job_dir: Path) -> dict:
     """Read the Harbor run settings from the first trial ``config.json`` in a job.
 
     Returns ``agent``, ``model``, ``env``, ``agent_kwargs`` (as ``KEY=VALUE``
-    strings for ``--agent-kwarg``) and ``agent_timeout_multiplier``.
+    strings for ``--agent-kwarg``), ``agent_env`` (as ``KEY=VALUE`` strings for
+    ``--agent-env``) and ``agent_timeout_multiplier``.
     """
     for trial in sorted(job_dir.iterdir()):
         cfg_path = trial / "config.json"
@@ -170,6 +200,7 @@ def read_job_harbor_config(job_dir: Path) -> dict:
                 f"{k}={v if isinstance(v, str) else json.dumps(v)}"
                 for k, v in kwargs.items()
             ],
+            "agent_env": [f"{k}={v}" for k, v in (agent.get("env") or {}).items()],
             "agent_timeout_multiplier": cfg.get("agent_timeout_multiplier"),
         }
     raise RuntimeError(f"no trial config.json found under {job_dir}")
@@ -195,6 +226,7 @@ def run_harbor(
     include_tasks: Sequence[str] | None = None,
     agent_timeout_multiplier: float | None = None,
     agent_kwargs: Sequence[str] | None = None,
+    agent_env: Sequence[str] | None = None,
 ) -> Path:
     """Invoke `harbor run` and return the created job directory."""
     if shutil.which("harbor") is None:
@@ -221,14 +253,24 @@ def run_harbor(
     if agent_kwargs:
         for kw in agent_kwargs:
             cmd += ["--agent-kwarg", kw]
+    if agent_env:
+        for kv in agent_env:
+            cmd += ["--agent-env", kv]
     if agent_timeout_multiplier is not None:
         cmd += ["--agent-timeout-multiplier", str(agent_timeout_multiplier)]
     if env:
         cmd += ["--env", env]
     if env_file is not None:
         cmd += ["--env-file", str(env_file)]
-    print(f"+ {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
+    print(f"+ {_display_cmd(cmd)}")
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as exc:
+        # CalledProcessError carries the raw argv, secrets included; report the
+        # redacted command and drop the original from the traceback.
+        raise RuntimeError(
+            f"harbor run failed (exit {exc.returncode}): {_display_cmd(cmd)}"
+        ) from None
 
     after = [p for p in jobs_dir.iterdir() if p.is_dir() and p.name not in before]
     if not after:
@@ -379,6 +421,10 @@ def main() -> int:
     ap.add_argument("--agent-kwarg", action="append", default=[], metavar="KEY=VALUE",
                     help="Extra agent kwarg forwarded to `harbor run --agent-kwarg` "
                          "(repeatable).")
+    ap.add_argument("--agent-env", action="append", default=[], metavar="KEY=VALUE",
+                    help="Environment variable for the agent process, forwarded to "
+                         "`harbor run --agent-env` (repeatable), e.g. "
+                         "OPENCODE_EXPERIMENTAL_OUTPUT_TOKEN_MAX=128000.")
     ap.add_argument("--agent-timeout-multiplier", type=float, default=None,
                     help="Multiply the per-task agent timeout (e.g. 3 for slow "
                          "high-effort models that time out at the default 1.0).")
@@ -426,6 +472,7 @@ def main() -> int:
         jobs_dir=jobs_dir, include_tasks=include_tasks,
         agent_timeout_multiplier=args.agent_timeout_multiplier,
         agent_kwargs=agent_kwargs,
+        agent_env=args.agent_env,
     )
     print(f"job: {job_dir}")
 
